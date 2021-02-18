@@ -1,0 +1,28 @@
+#!/bin/bash
+#PBS -l nodes=45:ppn=16,walltime=03:00:00:00
+#PBS -l gres=ccm
+#PBS -r n
+#PBS -o e.o/$PBS_JOBID.o
+#PBS -e e.o/$PBS_JOBID.e
+#PBS -q gpu
+rep_num=38
+module load ccm
+module load gcc
+module swap PrgEnv-cray PrgEnv-gnu
+module load namd/gnu/gpu/2.11
+ 
+  
+jobname=sim
+logfile=${jobname}.log
+
+cd $PBS_O_WORKDIR
+
+if [ -e $logfile ]; then
+   echo Log file already exists!
+   exit
+fi
+let rep_num=$rep_num-1
+mkdir -p output_000/{0..45}
+mkdir output_000/dat
+
+aprun -n 45 -N 1 -d 16 namd2 +idlepoll +ppn 15 +replicas 45 +CmiSpinOnIdle $jobname.conf +stdout output_000/%d/job0.%d.log >& $logfile

@@ -1,0 +1,11 @@
+The simulation cannot be submmited automatically but nothing else needs to be changed, the scripts will take care of every thing by itself.
+The following caution should be considered unless something went wrong.
+
+If one simulation was killed, in order to run it again, just delete the output folder corespond to the simulation job number.
+If one needed to keep the data related to the killed job, just log file and sim.job.restart.tcl file will need to be updated for new simulation. "sim3.log"
+has to be changed to sim3_"sumulation job Number".log
+
+For submmiting the first job use regular qsub command, but for the other jobs dependency qsub is needed: 
+qsub -W depend=afterany:'last job_ID' sim_ext.pbs
+
+sim.job.restart.tcl file in the main directory must be checked after each simulation for any inconsistency. 

@@ -1,0 +1,175 @@
+
+replicaBarrier
+
+set nr [numReplicas]
+if { $num_replicas != $nr } {
+    error "restart with wrong number of replicas"
+}
+set r [myReplica]
+set replica_id $r
+
+# Read initial refIDs from file "rid.dat"
+set fd [open rid.dat r]
+set initRefID [read $fd]
+close $fd
+
+set initSimID [lrepeat $nr -1]
+for {set i 0} {$i < $nr} {incr i} {
+   set rid [lindex $initRefID $i]
+   if {[lindex $initSimID $rid] != -1} {
+      error "Inconsistent initial refIDs!"
+   }
+   lset initSimID $rid $i
+}
+
+set i_job 0 
+set i_run 0
+set i_step 0
+if {[info exists first_timestep]} {
+   set i_step $first_timestep
+}
+
+set rid [lindex $initRefID $r]
+
+set replica(index) $rid
+set replica(index.a) $rid
+set replica(index.b) $rid
+set replica(exchanges_attempted) 0
+set replica(exchanges_accepted) 0
+
+if { $rid % 2 == 0 && $rid + 1 < $nr } {
+   set replica(index.a) [expr $rid + 1]
+}
+if { $rid % 2 == 1 && $rid > 0 } {
+   set replica(index.a) [expr $rid - 1]
+}
+
+if { $rid % 2 == 1 && $rid + 1 < $nr } {
+   set replica(index.b) [expr $rid + 1]
+}
+if { $rid % 2 == 0 && $rid > 0 } {
+   set replica(index.b) [expr $rid - 1]
+}
+
+set replica(loc.a) [lindex $initSimID $replica(index.a)]
+set replica(loc.b) [lindex $initSimID $replica(index.b)]
+
+# Initial simulation status
+set prefix [format $initial_root $r]
+coordinates $prefix.pdb
+# binvelocities $prefix.vel
+extendedSystem $prefix.xsc
+
+set job_output_root "$output_root.job$i_job"
+firsttimestep $i_step
+
+set refID $replica(index)
+outputname [format $job_output_root.$replica_id $replica_id]
+
+dcdFreq [expr $steps_per_run * $runs_per_frame]
+
+source $namd_config_file
+
+set dbeta [expr 503.223 / $T]
+
+set history_file [open [format "$job_output_root.$replica_id.history" $replica_id] "w"]
+fconfigure $history_file -buffering line
+
+while {$i_run < $num_runs} {
+ 
+  run $steps_per_run
+  incr i_step $steps_per_run
+  
+  set delE [calcDiffEng $i_run]
+
+  if { $i_run % 2 == 0 } {
+    set swap a; set other b
+  } else {
+    set swap b; set other a
+  }
+  
+  set rid $replica(index)
+  set rid2 $replica(index.$swap)
+  puts $history_file "$i_step $rid $rid2 $delE"
+  
+  set doswap 0
+  if { $rid < $rid2 } {
+    set delE2 [replicaRecv $replica(loc.$swap)]
+
+    set delta [expr $dbeta * ($delE + $delE2)]
+    set doswap [expr $delta < 0. || exp(-1. * $delta) > rand()]
+    replicaSend $doswap $replica(loc.$swap)
+    if { $doswap } {
+      puts stderr "EXCHANGE_ACCEPT $rid ($r) $rid2 ($replica(loc.$swap)) RUN $i_run"
+      incr replica(exchanges_accepted)
+    }
+    incr replica(exchanges_attempted)
+  }
+  if { $rid > $rid2 } {
+    replicaSend $delE $replica(loc.$swap)
+    set doswap [replicaRecv $replica(loc.$swap)]
+  }
+
+  set newloc $r
+  if { $doswap } {
+    set newloc $replica(loc.$swap)
+    set replica(loc.$swap) $r
+  }
+  set replica(loc.$other) [replicaSendrecv $newloc $replica(loc.$other) $replica(loc.$other)]
+  if { $doswap } {
+    array set replica [replicaSendrecv [array get replica] $newloc $newloc]
+    set refID $replica(index)
+  }
+
+  # puts stderr "iteration $i_run replica $replica(index) now on rank $r"
+  # replicaBarrier
+
+  incr i_run
+
+  if { $i_run % ($runs_per_frame * $frames_per_restart) == 0 ||
+        $i_run == $num_runs } {  # restart
+    set restart_root "$job_output_root.restart$i_run"
+    output [format $restart_root.$replica_id $replica_id]
+    set rfile [open [format "$restart_root.$replica_id.tcl" $replica_id] "w"]
+    puts $rfile [list array set replica [array get replica]]
+    close $rfile
+#    replicaBarrier
+    if { $replica_id == 0 } {
+      set rfile [open [format "$restart_root.tcl" ""] "w"]
+      puts $rfile [list set i_job [expr $i_job + 1]]
+      puts $rfile [list set i_run $i_run]
+      puts $rfile [list set i_step $i_step]
+      puts $rfile [list set restart_root $restart_root]
+      close $rfile
+      if [info exists old_restart_root] {
+        set oldroot [format $old_restart_root ""]
+        file delete $oldroot.tcl
+      }
+      file copy -force [format output_%03d/sim.job$i_job.restart$i_run.tcl $i_job] ./sim.job.restart.tcl
+      file copy -force sim.log log/[format sim_%03d.log $i_job] 
+    }
+#    replicaBarrier
+    if [info exists old_restart_root] {
+      set oldroot [format $old_restart_root $replica_id]
+      file delete $oldroot.$replica_id.tcl
+      file delete $oldroot.$replica_id.coor
+      file delete $oldroot.$replica_id.vel
+      file delete $oldroot.$replica_id.xsc
+    }
+    set old_restart_root $restart_root
+  }
+}
+
+replicaBarrier
+
+set attempts $replica(exchanges_attempted)
+if $attempts {
+  set i $replica(index)
+  set i2 [expr $i + 1]
+  set accepts $replica(exchanges_accepted)
+  set ratio [expr 1.0*$accepts/$attempts]
+  puts stderr "EXCHANGE_RATIO $i $i2 $accepts $attempts $ratio"
+}
+
+replicaBarrier
+
