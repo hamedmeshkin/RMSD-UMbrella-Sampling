@@ -1,4 +1,4 @@
-The simulation cannot be submmited automatically but nothing else needs to be changed, the scripts will take care of every thing by itself.
+The simulation cannot be submmited automatically but nothing needs to be changed, the scripts will take care of every thing by itself.
 The following caution should be considered unless something went wrong.
 
 If one simulation was killed, in order to run it again, just delete the output folder corespond to the simulation job number.
